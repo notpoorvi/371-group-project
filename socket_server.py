@@ -1,18 +1,44 @@
 import socket
 import threading
 
-def handle_client(client_socket):
-    # This function is responsible for handling each client connection.
-    # It sends a greeting message to the client and then closes the connection.
-    client_socket.send(b"Hello, Client!")
-    client_socket.close()
 
-while True:
-    # The server continuously listens for incoming client connections.
-    client_socket, addr = server_socket.accept()
-    # When a new client connects, a new thread is created to handle the client.
-    client_thread = threading.Thread(target=handle_client, args=(client_socket,))
-    client_thread.start()
+# Dictionary to track connected players
+players = {}
+
+# Disconnect message "break"
+
+def handle_client(server_socket, player_address):
+    while True:
+        try:
+            data, addr = server_socket.recvfrom(1024)
+            message = data.decode()
+
+            if message == "break":
+                print(f"Player {addr} disconnected.")
+                del players[addr]
+
+                # Shutdown the server if no players remain
+                if len(players) == 0:
+                    print("All players disconnected. Shutting down server...")
+                    server_socket.close()
+                    return
+
+                break
+
+            print(f"Received from {addr}: {message}")
+
+            # Send response
+            response = "You are connected to server Game"
+            server_socket.sendto(response.encode(), addr)
+
+        except Exception as e:
+            print(f"Error handling {addr}: {e}")
+            break
+
+# Broadcast message from orignated to server to all clients
+def broadcast_message(server_socket, message):
+    for player_addr in players:
+        server_socket.sendto(message.encode(), player_addr)        
 
 def server_program():
     host = socket.gethostname()
@@ -21,32 +47,33 @@ def server_program():
 
     # Set up the server as UDP using IPV4
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
     # Bind host address and port together
     server_socket.bind((host, port))
 
-    socket.setblocking(False)
-
-    # Configure how many clients the server can listen simultaneously (4)
-    server_socket.listen(4) # Fours players
-    conn, address = server_socket.accept()  # accept new connection
-    print("Connection from: " + str(address))
-
-   
-    while True:
-
-        data = conn.recv(1024).decode()
     
-        if  data == "break":
-            break  # Break loop if client disconnects
-        print(f"Received: {message}")
+    print("Waiting for players...")
 
-        # Send response
-        response = "ack at you UDP"
-        server_socket.sendto(response.encode(), client_address)
+    # Since it is UDP, no connection stablishment
 
+    while len(players) < 2:
+        try:
+            data, addr = server_socket.recvfrom(1024) # Data, address from player
+            
+            if addr not in players:
+                players[addr] = True  # Track the new player, Addr -> True
+                print(f"Player from {addr} connected.")
+                # Create a thread to handle that player specifc messages without freezing application
+                threading.Thread(target=handle_client, args=(server_socket, addr)).start() 
 
-    # Close the socket
+            # Start game logic once 2+ players have joined
+            if len(players) >= 2:
+                print("Minimum players connected. Starting the game...") # Replace this 
+
+        except Exception as e:
+            print(f"Error: {e}")
+    
+    print("Game started! Waiting for additional players...")
+
     server_socket.close()
 
 if __name__ == '__main__':
