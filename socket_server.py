@@ -2,7 +2,7 @@ import socket
 
 def server_program():
     # UDP Server that handles multiple clients (no need for threads since UDP is connectionless)
-    host = socket.gethostbyname('localhost')  # Get actual IP
+    host = socket.gethostbyname(socket.gethostname())  # Get actual IP
     port = 53444
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
