@@ -10,9 +10,14 @@ def server_program():
 
     print(f"UDP Server is listening on {host}:{port}")
 
+    counter = 0;
     while True:
         data, client_address = server_socket.recvfrom(1024) 
         message = data.decode()
+        
+        if message == "Hello UDP Server":
+            server_socket.sendto(str(counter).encode(), client_address)
+            counter+=1;
         
         print(f"Received from {client_address}: {message}")
 

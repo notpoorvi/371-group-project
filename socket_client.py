@@ -6,8 +6,11 @@ import json
 
 pygame.init()
 
+HOST = socket.gethostbyname(socket.gethostname())
+# if not running on local host, change above to be the output of the server program
+PORT = 53444
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-server_address = ('0.0.0.0', 53444)  # server IP and port
+server_address = (HOST, PORT)  # server IP and port
 # to get the server IP (same as client IP since running on local host, check print output of server program)
 client_id = random.randint(1000, 9999)  # unique client ID
 
@@ -19,6 +22,10 @@ pygame.display.set_caption(f"Deny and Conquer: Player {client_id}")
 
 message = "Hello UDP Server"
 client_socket.sendto(message.encode(), server_address)
+data, _ = client_socket.recvfrom(4096)
+playerNumber = int(data.decode())
+# gets the player number and uses it to assign a player color. Doesn't currently account for players leaving
+# breaks if it goes above 4 because there are only 4 PLAYER_COLORS
     
 # Color definitions 
 WHITE = (255, 255, 255)
@@ -26,11 +33,12 @@ BLACK = (0, 0, 0)
 
 PLAYER_COLORS = [
     (255, 0, 0),    # Red
-    (0, 0, 255),    # Blue
+    (0, 255, 255),  # Cyan
     (0, 255, 0),    # Green
-    (255, 255, 0),  # Yellow
+    (255, 0, 255),  # Pink
 ]
-my_color = None
+#my_color = PLAYER_COLORS[playerNumber]
+my_color = PLAYER_COLORS[0] # for testing
 
 # Setting up the grid size
 GRID_SIZE = 8
@@ -115,6 +123,7 @@ pygame.display.flip()
 send_message("join")
 
 # Game loop (keeps the game running)
+last_Pos = None
 running = True
 clock = pygame.time.Clock()
 while running:
@@ -122,6 +131,22 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+    mouseDown = pygame.mouse.get_pressed()[0]
+    if mouseDown:
+        pos = pygame.mouse.get_pos()
+        xPos = pos[0]
+        yPos = pos[1]
+        if xPos < x+SQUARE_SIZE-1 and yPos < y+SQUARE_SIZE-1 and xPos > GRID_TOP_LEFT_X and yPos > GRID_TOP_LEFT_Y:
+            if not last_Pos:
+                pygame.draw.line(screen, my_color, pos, pos, 1)
+            else:
+                pygame.draw.line(screen, my_color, last_Pos, pos, 1)
+            last_Pos = pos
+        else:
+            last_Pos = None
+    else:
+        last_Pos = None
+    pygame.display.flip()
 
 send_message("leave")
 pygame.quit()
