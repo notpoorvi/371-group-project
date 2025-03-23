@@ -13,10 +13,13 @@ def server_program():
 
     # Game state initialization
     GRID_SIZE = 8
-    game_state = {
-        f"{row},{col}": {"owner": None, "color_idx": None}
-        for row in range(GRID_SIZE) for col in range(GRID_SIZE)
-    }
+    game_state = {}  # initialize as dict of dicts
+    for row in range(GRID_SIZE):
+        game_state[str(row)] = {}
+        for col in range(GRID_SIZE):
+            game_state[str(row)][str(col)] = {"owner": None, "color_idx": None}
+            
+    drawing_state = {}  # track which squares are being drawn
     player_count = 0
     players = {}
 
@@ -28,46 +31,133 @@ def server_program():
         data = message["data"]
 
         if message_type == "join":
-            # Assign a player ID
-            player_count += 1
-            player_number = player_count  # Start counting players from 1
-            players[client_id] = {
-                "player_number": player_number,
-                "client_address": client_address
-            }
-            print(f"Player {player_number} joined the game.")
-
-            response = {
-                "type": "start",
-                "data": {
-                    "color_idx": (player_number - 1),  # Assign player colors based on player_number
-                    "player_count": player_count
+            # assign a player ID and color
+            if client_id not in players:
+                player_count += 1
+                players[client_id] = {
+                    "player_number": player_count - 1,
+                    "client_address": client_address,
+                    "color_idx": (player_count - 1) % 4  # cycle through 4 colors
                 }
-            }
-            server_socket.sendto(json.dumps(response).encode(), client_address)
+                print(f"Player {client_id} joined the game with color index {players[client_id]['color_idx']}.")
+
+                response = {
+                    "type": "start",
+                    "data": {
+                        "color_idx": players[client_id]["color_idx"],
+                        "player_count": player_count
+                    }
+                }
+                server_socket.sendto(json.dumps(response).encode(), client_address)
+                
+                # send current game state to the new player
+                game_state_response = {
+                    "type": "game_state",
+                    "data": {
+                        "game_board": game_state,
+                        "player_count": player_count,
+                        "drawing": drawing_state
+                    }
+                }
+                server_socket.sendto(json.dumps(game_state_response).encode(), client_address)
 
         elif message_type == "start_drawing":
-            # Forward drawing data to all players without modifying game state
+            row = data.get("row")
+            col = data.get("col")
+            
+            # mark square as being drawn
+            if str(row) not in drawing_state:
+                drawing_state[str(row)] = {}
+            
+            drawing_state[str(row)][str(col)] = {
+                "drawer_id": client_id,
+                "color_idx": players[client_id]["color_idx"]
+            }
+            
+            # broadcast to all players about the drawing
+            for player_id, player_info in players.items():
+                response = {
+                    "type": "start_drawing",
+                    "data": {
+                        "row": row,
+                        "col": col,
+                        "drawer_id": client_id,
+                        "color_idx": players[client_id]["color_idx"]
+                    }
+                }
+                server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
+
+        elif message_type == "drawing":
+            # forward drawing data with pen thickness
+            start = data.get("start")
+            end = data.get("end")
+            thickness = data.get("thickness", 5)
+            row = data.get("row")
+            col = data.get("col")
+            
             for player_id, player_info in players.items():
                 if player_id != client_id:  # Don't send back to the sender
                     response = {
-                        "type": "start_drawing",
-                        "data": data
+                        "type": "drawing",
+                        "data": {
+                            "start": start,
+                            "end": end,
+                            "thickness": thickness,
+                            "color_idx": players[client_id]["color_idx"],
+                            "row": row,
+                            "col": col
+                        }
                     }
                     server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
 
         elif message_type == "end_drawing":
-            row = str(data.get("row"))
-            col = str(data.get("col"))
+            row = data.get("row")
+            col = data.get("col")
             fill_percentage = data.get("fill_percentage", 0)
-            color_index = data.get("color_index")
+            color_idx = players[client_id]["color_idx"]
+            
+            # remove from drawing state
+            if str(row) in drawing_state and str(col) in drawing_state[str(row)]:
+                del drawing_state[str(row)][str(col)]
+            
+            # if fill percentage is more than 50, claim the square
+            if fill_percentage >= 50:
+                game_state[str(row)][str(col)] = {
+                    "owner": client_id,
+                    "color_idx": color_idx
+                }
+                
+                # broadcast to all players about the ownership of square
+                for player_id, player_info in players.items():
+                    response = {
+                        "type": "square_owned",
+                        "data": {
+                            "row": row,
+                            "col": col,
+                            "owner_id": client_id,
+                            "color_idx": color_idx
+                        }
+                    }
+                    server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
+            
+            # update all players with game state
+            for player_id, player_info in players.items():
+                response = {
+                    "type": "game_state",
+                    "data": {
+                        "game_board": game_state,
+                        "player_count": player_count,
+                        "drawing": drawing_state
+                    }
+                }
+                server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
             
         elif message_type == "leave":
             # Handle player leaving
             if client_id in players:
                 player_info = players.pop(client_id)
                 player_count -= 1
-                print(f"Player {player_info['player_number']} left the game.")
+                print(f"Player {client_id} left the game.")
 
                 # Optionally, update other players about the departure
                 for player_id, player_info in players.items():
@@ -75,7 +165,8 @@ def server_program():
                         "type": "game_state",
                         "data": {
                             "game_board": game_state,
-                            "player_count": player_count
+                            "player_count": player_count,
+                            "drawing": drawing_state
                         }
                     }
                     server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])

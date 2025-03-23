@@ -1,6 +1,6 @@
 import socket
 import pygame
-from threading import Thread, Lock
+from threading import Thread, Lock, main_thread, current_thread
 import random
 import json
 import numpy as np
@@ -16,68 +16,19 @@ def send_message(message_type, data=None):
     message_str = json.dumps(message)
     client_socket.sendto(message_str.encode(), server_address)
 
-my_color = None
-player_count = 1
+pygame.init()
+
 HOST = socket.gethostbyname(socket.gethostname())
 PORT = 53444
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_address = (HOST, PORT)  # server IP and port
 client_id = random.randint(1000, 9999)  # unique client ID
 
-# receive messages from the server
-def receive_message():
-    global my_color, player_count
-    
-    while True:
-        data, _ = client_socket.recvfrom(4096)
-        message = json.loads(data.decode())
-        if message["type"] == "start":
-            my_color = PLAYER_COLORS[message["data"]["color_idx"]]
-            player_count = message["data"]["player_count"]
-            print(f"Connected as player {client_id} with color {my_color}")
-            print(f"Number of players playing the game: {player_count}")
-
-        # current game state, which player owns which square ...
-        elif message["type"] == "game_state":
-            game_state = message["data"]["game_board"]
-            player_count = message["data"]["player_count"]
-            drawing_state = message["data"].get("drawing", {})
-
-        # updated when a player owns a square by coloring it more than 50%
-        elif message["type"] == "square_owned":
-            row = message["data"]["row"]
-            col = message["data"]["col"]
-            owner_id = message["data"]["owner_id"]
-            color_idx = message["data"]["color_idx"]
-            game_state[str(row)][str(col)] = {
-                "owner": owner_id,
-                "color_idx": color_idx
-            }
-
-        elif message["type"] == "drawing":
-            start = message["data"]["start"]
-            end = message["data"]["end"]
-            color_idx = message["data"]["color_idx"]
-            draw_color = PLAYER_COLORS[color_idx]
-
-            # Draw the received line
-            pygame.draw.line(screen, draw_color, start, end, PEN_THICKNESS)
-            pygame.display.flip()  # Refresh the screen to show updated drawing
-
-        # more message types go here ...
-
-pygame.init()
-
 # Setting up display
 SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 BOARD_SIZE = min(SCREEN_WIDTH, SCREEN_HEIGHT) - 100
 pygame.display.set_caption(f"Deny and Conquer: Player {client_id}")
-
-send_message("join")
-# Use thread to not freeze the application
-receiver_thread = Thread(target=receive_message, daemon=True) 
-receiver_thread.start()
     
 # Color definitions 
 WHITE = (255, 255, 255)
@@ -102,63 +53,144 @@ game_state = {} # which player owns which square
 drawing_state = {} # which squares are being drawn on
 player_count = 0 # no. of players playing
 pixel_count = 0 # no. of pixels colored
-color_idx = 0
+my_color_idx = 0  # Will be set from server message
+my_color = PLAYER_COLORS[0]  # Default, will be updated
 font = pygame.font.SysFont(None, 26)
+running = True # flag to control the receiver thread
 
-# draw current board with squares drawn and owned by other players
+
+# receive messages from the server
+def receive_message():
+    global game_state, drawing_state, player_count, my_color_idx, my_color
+    
+    while running:
+        try:
+            client_socket.settimeout(0.5)
+            data, _ = client_socket.recvfrom(4096)
+            message = json.loads(data.decode())
+            
+            if message["type"] == "start":
+                my_color_idx = message["data"]["color_idx"]
+                my_color = PLAYER_COLORS[my_color_idx]
+                player_count = message["data"]["player_count"]
+                print(f"Connected as player {client_id} with color {my_color} (index {my_color_idx})")
+                print(f"Number of players playing the game: {player_count}")
+            
+            # current game state, which player owns which square ...
+            elif message["type"] == "game_state":
+                game_state = message["data"]["game_board"]
+                player_count = message["data"]["player_count"]
+                if "drawing" in message["data"]:
+                    drawing_state = message["data"]["drawing"]
+            
+            # updated when a player owns a square by coloring it more than 50%
+            elif message["type"] == "square_owned":
+                row = message["data"]["row"]
+                col = message["data"]["col"]
+                owner_id = message["data"]["owner_id"]
+                color_idx = message["data"]["color_idx"]
+                
+                if str(row) not in game_state:
+                    game_state[str(row)] = {}
+                
+                game_state[str(row)][str(col)] = {
+                    "owner": owner_id,
+                    "color_idx": color_idx
+                }
+            
+            elif message["type"] == "start_drawing":
+                row = message["data"]["row"]
+                col = message["data"]["col"]
+                drawer_id = message["data"]["drawer_id"]
+                color_idx = message["data"]["color_idx"]
+                
+                if str(row) not in drawing_state:
+                    drawing_state[str(row)] = {}
+                
+                drawing_state[str(row)][str(col)] = {
+                    "drawer_id": drawer_id,
+                    "color_idx": color_idx,
+                    "surface": pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
+                }
+                drawing_state[str(row)][str(col)]["surface"].fill((255, 255, 255, 0))
+            
+            elif message["type"] == "drawing":
+                row = message["data"]["row"]
+                col = message["data"]["col"]
+                start = message["data"]["start"]
+                end = message["data"]["end"]
+                color_idx = message["data"]["color_idx"]
+                thickness = message["data"].get("thickness", PEN_THICKNESS)
+                
+                if str(row) in drawing_state and str(col) in drawing_state[str(row)]:
+                    surface = drawing_state[str(row)][str(col)]["surface"]
+                    pygame.draw.line(surface, PLAYER_COLORS[color_idx], start, end, thickness)
+        
+        except socket.timeout:
+            continue    
+        
+        except Exception as e:
+            if running:
+                print(f"Error receiving message: {e}")
+
 def draw_curr_board():
-    # Background
-    screen.fill(WHITE)
+    try:
+        # Background
+        screen.fill(WHITE)
 
-    # Drawing 8 by 8 Grid
-    for row in range(GRID_SIZE):
-        for col in range(GRID_SIZE):
+        # Drawing 8 by 8 Grid
+        for row in range(GRID_SIZE):
+            for col in range(GRID_SIZE):
+                x = GRID_TOP_LEFT_X + col * SQUARE_SIZE
+                y = GRID_TOP_LEFT_Y + row * SQUARE_SIZE
+                
+                square_color = WHITE
+                # check if square is owned
+                if str(row) in game_state and str(col) in game_state[str(row)]:
+                    color_idx = game_state[str(row)][str(col)]["color_idx"]
+                    # square_color = PLAYER_COLORS[color_idx]
+                    if color_idx is not None:
+                        square_color = PLAYER_COLORS[color_idx]
+                
+                pygame.draw.rect(
+                    screen, 
+                    square_color, 
+                    (x, y, SQUARE_SIZE, SQUARE_SIZE)
+                )
+                pygame.draw.rect(
+                    screen, 
+                    BLACK, 
+                    (x, y, SQUARE_SIZE, SQUARE_SIZE), 
+                    1  
+                )
+                
+                # draw squares being drawn on by other players
+                if str(row) in drawing_state and str(col) in drawing_state[str(row)]:
+                    drawer_id = drawing_state[str(row)][str(col)]["drawer_id"]
+                    if drawer_id != client_id:  # only draw others drawings
+                        drawer_surface = drawing_state[str(row)][str(col)].get("surface")
+                        if drawer_surface:
+                            screen.blit(drawer_surface, (x, y))
+
+        # if we're currently drawing, show our drawing
+        if drawing_in_progress and drawing_surface and current_square:
+            row, col = current_square
             x = GRID_TOP_LEFT_X + col * SQUARE_SIZE
             y = GRID_TOP_LEFT_Y + row * SQUARE_SIZE
-            
-            square_color = WHITE
-            # check if square is owned
-            if str(row) in game_state and str(col) in game_state[str(row)]:
-                color_idx = game_state[str(row)][str(col)]["color_idx"]
-                square_color = PLAYER_COLORS[color_idx]
-            
-            pygame.draw.rect(
-                screen, 
-                square_color, 
-                (x, y, SQUARE_SIZE, SQUARE_SIZE)
-            )
-            pygame.draw.rect(
-                screen, 
-                BLACK, 
-                (x, y, SQUARE_SIZE, SQUARE_SIZE), 
-                1  
-            )
-            
-            # draw squares being drawn on by other players
-            if str(row) in drawing_state and str(col) in drawing_state[str(row)]:
-                drawer_id = drawing_state[str(row)][str(col)]["drawer_id"]
-                drawer_color_idx = drawing_state[str(row)][str(col)]["color_idx"]
-                drawer_surface = drawing_state[str(row)][str(col)].get("surface")
-                if drawer_surface:
-                    screen.blit(drawer_surface, (x, y))
+            screen.blit(drawing_surface, (x, y))
 
-    # if we're currently drawing, show our drawing
-    if drawing_in_progress and drawing_surface and current_square:
-        row, col = current_square
-        x = GRID_TOP_LEFT_X + col * SQUARE_SIZE
-        y = GRID_TOP_LEFT_Y + row * SQUARE_SIZE
-        screen.blit(drawing_surface, (x, y))
-
-    # Update the display
-    pygame.display.flip()
-
-# send message to server to join the game
-send_message("join")
+        if current_thread() is main_thread():
+            # Update the display
+            pygame.display.flip()
+    
+    except Exception as e:
+        print(f"Error in draw_curr_board: {e}")
+        
 
 drawing_in_progress = False
 drawing_surface = None
-# to track the fill percentage (must be more than 50 for player to claim square)
 drawing_pixels = None
+current_square = None
 last_Pos = None
 total_pixels = 0
 
@@ -177,17 +209,10 @@ def get_grid_position(mouse_pos):
 def start_drawing(square):
     global drawing_in_progress, current_square, drawing_surface, drawing_pixels, pixel_count, total_pixels, last_Pos
     row, col = square
-    last_Pos = None  
     
-    # check if square is available
-    if (str(row) in game_state and str(col) in game_state[str(row)]) or \
-       (str(row) in drawing_state and str(col) in drawing_state[str(row)]):
+    if (str(row) in game_state and str(col) in game_state[str(row)] and game_state[str(row)][str(col)]["owner"] is not None) or \
+    (str(row) in drawing_state and str(col) in drawing_state[str(row)]):
         return False
-    
-    send_message("start_drawing", {
-        "row": row,
-        "col": col
-    })
     
     # set up drawing
     drawing_in_progress = True
@@ -198,10 +223,17 @@ def start_drawing(square):
     drawing_pixels = np.zeros((SQUARE_SIZE, SQUARE_SIZE), dtype=bool)
     pixel_count = 0
     total_pixels = SQUARE_SIZE * SQUARE_SIZE
+    last_Pos = None
+    
+    # notify server the player is starting to draw
+    send_message("start_drawing", {
+        "row": row,
+        "col": col
+    })
+    
     return True
 
 def continue_drawing(pos):
-    # continue drawing on current square
     global pixel_count, drawing_pixels, last_Pos
     
     if not drawing_in_progress or not current_square:
@@ -220,27 +252,40 @@ def continue_drawing(pos):
         current_pos = (rel_x, rel_y)
         
         if last_Pos:
-            pygame.draw.line(drawing_surface, my_color, last_Pos, current_pos, PEN_THICKNESS)                
-            # mark pixels as drawn
+            # draw line between last position and current position
+            pygame.draw.line(drawing_surface, my_color, last_Pos, current_pos, PEN_THICKNESS)
+            
+            # send drawing data to server
+            send_message("drawing", {
+                "row": row,
+                "col": col,
+                "start": last_Pos,
+                "end": current_pos,
+                "thickness": PEN_THICKNESS
+            })
+            
+            # mark pixels as drawn (for fill percentage tracking)
             dx = current_pos[0] - last_Pos[0]
             dy = current_pos[1] - last_Pos[1]
             steps = max(abs(dx), abs(dy)) + 1
             
             if steps > 1:
-                    for i in range(steps):
-                        t = i / (steps - 1)
-                        x = int(last_Pos[0] + t * dx)
-                        y = int(last_Pos[1] + t * dy)
-                        
-                        # mark pixels within pen thickness
-                        for ox in range(-PEN_THICKNESS, PEN_THICKNESS + 1):
-                            for oy in range(-PEN_THICKNESS, PEN_THICKNESS + 1):
-                                if ox*ox + oy*oy <= PEN_THICKNESS*PEN_THICKNESS:
-                                    px, py = x + ox, y + oy
-                                    if 0 <= px < SQUARE_SIZE and 0 <= py < SQUARE_SIZE and not drawing_pixels[py, px]:
-                                        drawing_pixels[py, px] = True
-                                        pixel_count += 1
-            
+                for i in range(steps):
+                    t = i / (steps - 1)
+                    x = int(last_Pos[0] + t * dx)
+                    y = int(last_Pos[1] + t * dy)
+                    
+                    for ox in range(-PEN_THICKNESS, PEN_THICKNESS + 1):
+                        for oy in range(-PEN_THICKNESS, PEN_THICKNESS + 1):
+                            if ox*ox + oy*oy <= PEN_THICKNESS*PEN_THICKNESS:
+                                px, py = x + ox, y + oy
+                                if 0 <= px < SQUARE_SIZE and 0 <= py < SQUARE_SIZE and not drawing_pixels[py, px]:
+                                    drawing_pixels[py, px] = True
+                                    pixel_count += 1
+        else:
+            # if it's the first point, draw a circle
+            pygame.draw.circle(drawing_surface, my_color, current_pos, PEN_THICKNESS)
+        
         last_Pos = current_pos
 
 def end_drawing():
@@ -252,21 +297,15 @@ def end_drawing():
     row, col = current_square
     fill_percentage = (pixel_count / total_pixels) * 100
     
-    # update local drawing state before sending to server
+    # update local drawing state
     if str(row) not in drawing_state:
         drawing_state[str(row)] = {}
-    drawing_state[str(row)][str(col)] = {
-        "drawer_id": client_id,
-        "color_idx": color_idx,
-        "surface": drawing_surface.copy() 
-    }
     
     # send the fill percentage to the server
     send_message("end_drawing", {
         "row": row,
         "col": col,
-        "fill_percentage": fill_percentage,
-        "color_idx": color_idx
+        "fill_percentage": fill_percentage
     })
     
     # reset drawing state
@@ -275,17 +314,23 @@ def end_drawing():
     drawing_surface = None
     drawing_pixels = None
 
+# send message to server to join the game
+send_message("join")
+
+# Use thread to not freeze the application
+receiver_thread = Thread(target=receive_message, daemon=True)
+receiver_thread.start()
 
 # Game loop (keeps the game running)
 draw_curr_board()
-running = True
+game_running = True
 clock = pygame.time.Clock()
 
-while running:
+while game_running:
     clock.tick(60)
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
-            running = False
+            game_running = False
         
         # if mouse is down, start drawing
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -302,11 +347,14 @@ while running:
         # if mouse is up, end drawing
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1 and drawing_in_progress:
             end_drawing()
-        
-        draw_curr_board()
+    
+    # draw the board every frame
+    draw_curr_board()
 
 if drawing_in_progress:
     end_drawing()
+running = False
+receiver_thread.join(timeout=1.0) 
 send_message("leave")
 pygame.quit()
 client_socket.close()
