@@ -4,6 +4,59 @@ from threading import Thread, Lock
 import random
 import json
 
+# send message to the server
+def send_message(message_type, data=None):
+    # format and send message to server
+    message = {
+        "type": message_type,
+        "client_id": client_id,
+        "data": data or {}
+    }
+    message_str = json.dumps(message)
+    client_socket.sendto(message_str.encode(), server_address)
+
+
+# receive messages from the server
+def receive_message():
+    while True:
+        data, _ = client_socket.recvfrom(4096)
+        message = json.loads(data.decode())
+        if message["type"] == "start":
+            my_color = PLAYER_COLORS[message["data"]["color_idx"]]
+            player_count = message["data"]["player_count"]
+            print(f"Connected as player {client_id} with color {my_color}")
+            print(f"Number of players playing the game: {player_count}")
+
+        # current game state, which player owns which square ...
+        elif message["type"] == "game_state":
+            game_state = message["data"]["game_board"]
+            player_count = message["data"]["player_count"]
+            drawing_state = message["data"].get("drawing", {})
+
+        # updated when a player owns a square by coloring it more than 50%
+        elif message["type"] == "square_owned":
+            row = message["data"]["row"]
+            col = message["data"]["col"]
+            owner_id = message["data"]["owner_id"]
+            color_idx = message["data"]["color_idx"]
+            game_state[str(row)][str(col)] = {
+                "owner": owner_id,
+                "color_idx": color_idx
+            }
+
+        elif message["type"] == "drawing":
+            start = message["data"]["start"]
+            end = message["data"]["end"]
+            color_idx = message["data"]["color_idx"]
+            draw_color = PLAYER_COLORS[color_idx]
+
+            # Draw the received line
+            pygame.draw.line(screen, draw_color, start, end, PEN_THICKNESS)
+            pygame.display.flip()  # Refresh the screen to show updated drawing
+
+        # more message types go here ...
+
+
 pygame.init()
 
 HOST = socket.gethostbyname(socket.gethostname())
@@ -20,13 +73,11 @@ screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 BOARD_SIZE = min(SCREEN_WIDTH, SCREEN_HEIGHT) - 100
 pygame.display.set_caption(f"Deny and Conquer: Player {client_id}")
 
-message = "Hello UDP Server"
-client_socket.sendto(message.encode(), server_address)
-data, _ = client_socket.recvfrom(4096)
-playerNumber = int(data.decode())
-# gets the player number and uses it to assign a player color. Doesn't currently account for players leaving
+# gets the player number and uses it to assign a player color.
 # breaks if it goes above 4 because there are only 4 PLAYER_COLORS
-    
+send_message("join")
+Thread(target=receive_message, daemon=True).start() # Use thread to not freeze the application
+
 # Color definitions 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -46,7 +97,6 @@ SQUARE_SIZE = BOARD_SIZE // GRID_SIZE
 GRID_TOP_LEFT_X = (SCREEN_WIDTH - BOARD_SIZE) // 2
 GRID_TOP_LEFT_Y = (SCREEN_HEIGHT - BOARD_SIZE) // 2
 PEN_THICKNESS = 5
-
 # game state variables, updated when receiving messages from server
 game_state = {} # which player owns which square
 drawing_state = {} # which squares are being drawn on
@@ -55,46 +105,6 @@ pixel_count = 0 # no. of pixels colored
 color_idx = 0
 font = pygame.font.SysFont(None, 26)
 
-# send message to the server
-def send_message(message_type, data=None):
-    # format and send message to server
-    message = {
-        "type": message_type,
-        "client_id": client_id,
-        "data": data or {}
-    }
-    message_str = json.dumps(message)
-    client_socket.sendto(message_str.encode(), server_address)
-
-# receive messages from the server
-def receive_message():
-    while True:
-        data, _ = client_socket.recvfrom(4096)
-        message = json.loads(data.decode())
-        if message["type"] == "start":
-            my_color = PLAYER_COLORS[message["data"]["color_idx"]]
-            player_count = message["data"]["player_count"]
-            print(f"Connected as player {client_id} with color {my_color}")
-            print(f"Number of players playing the game: {player_count}")
-        
-        # current game state, which player owns which square ...
-        elif message["type"] == "game_state":
-            game_state = message["data"]["game_board"]
-            player_count = message["data"]["player_count"]
-            drawing_state = message["data"].get("drawing", {})
-            
-        # updated when a player owns a square by coloring it more than 50%
-        elif message["type"] == "square_owned":
-            row = message["data"]["row"]
-            col = message["data"]["col"]
-            owner_id = message["data"]["owner_id"]
-            color_idx = message["data"]["color_idx"]
-            game_state[str(row)][str(col)] = {
-                "owner": owner_id,
-                "color_idx": color_idx
-            }
-        
-        # more message types go here ...
 
 # Background
 screen.fill(WHITE)
@@ -141,7 +151,19 @@ while running:
                 pygame.draw.line(screen, my_color, pos, pos, 1)
             else:
                 pygame.draw.line(screen, my_color, last_Pos, pos, 1)
+
+            # Send drawing data to server with pixel coordinates
+            drawing_data = {
+                "start": last_Pos if last_Pos else pos,
+                "end": pos,
+                "color_idx": PLAYER_COLORS.index(my_color)
+            }
+            send_message("drawing", drawing_data)
+
+
             last_Pos = pos
+
+
         else:
             last_Pos = None
     else:
