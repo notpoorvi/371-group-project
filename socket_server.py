@@ -3,11 +3,14 @@ import json
 from threading import Thread, Lock
 
 def server_program():
-    host = socket.gethostbyname(socket.gethostname())  # Get actual IP
+    host = '0.0.0.0' # to listen on all network interfaces
     port = 53444
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_socket.bind((host, port))
+
+    MAX_PLAYERS = 4
+    curr_players = 0
 
     print(f"UDP Server is listening on {host}:{port}")
 
@@ -31,6 +34,16 @@ def server_program():
         data = message["data"]
 
         if message_type == "join":
+            curr_players += 1
+            if curr_players >= MAX_PLAYERS:
+                print("Player count (4) exceeded!")
+                response = {
+                    "type": "max_player_count_reached",
+                    "data": None
+                }
+                server_socket.sendto(json.dumps(response).encode(), client_address)
+                continue
+                            
             # assign a player ID and color
             if client_id not in players:
                 player_count += 1
@@ -153,12 +166,12 @@ def server_program():
                 server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
             
         elif message_type == "leave":
-            # Handle player leaving
+            # handle player leaving
             if client_id in players:
                 player_info = players.pop(client_id)
                 player_count -= 1
                 print(f"Player {client_id} left the game.")
-
+                curr_players -= 1
                 # Optionally, update other players about the departure
                 for player_id, player_info in players.items():
                     response = {
@@ -172,7 +185,7 @@ def server_program():
                     server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
 
         else:
-            # Unknown message type
+            # unknown message type
             print(f"Received unknown message type from {client_address}: {message_type}")
 
 if __name__ == '__main__':
