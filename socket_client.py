@@ -59,11 +59,16 @@ my_color_idx = 0  # will be set from server message
 my_color = PLAYER_COLORS[0]  # default, will be updated
 font = pygame.font.SysFont(None, 26)
 running = True # flag to control the receiver thread
-
+player_scores = {
+    "Red": 0,
+    "Cyan": 0,
+    "Green": 0,
+    "Pink": 0
+}
 
 # receive messages from the server
 def receive_message():
-    global game_state, drawing_state, player_count, my_color_idx, my_color
+    global game_state, drawing_state, player_count, my_color_idx, my_color, player_scores
     
     while running:
         try:
@@ -94,6 +99,21 @@ def receive_message():
                 col = message["data"]["col"]
                 owner_id = message["data"]["owner_id"]
                 color_idx = message["data"]["color_idx"]
+                score = message["data"]["score"]
+
+                # Map color index to color
+                color_map = {
+                    0: "Red",
+                    1: "Cyan",
+                    2: "Green",
+                    3: "Pink"
+                }
+
+                player_color = color_map[color_idx]  # Get the player name
+
+                # Update the player's score
+                player_scores[player_color] = score
+
                 
                 if str(row) not in game_state:
                     game_state[str(row)] = {}
@@ -138,10 +158,22 @@ def receive_message():
             if running:
                 print(f"Error receiving message: {e}")
 
+def draw_scores():
+    score_x = 20  # X position for the scores
+    score_y = 20  # Starting Y position
+    spacing = 30  # Space between scores
+
+    for i, (player, score) in enumerate(player_scores.items()):
+        score_text = font.render(f"{player}: {score}", True, "black")
+        screen.blit(score_text, (score_x, score_y + i * spacing))  # Display score
+
 def draw_curr_board():
     try:
         # background
         screen.fill(WHITE)
+
+        # Scores
+        draw_scores()
 
         # drawing 8 by 8 Grid
         for row in range(GRID_SIZE):
@@ -190,6 +222,8 @@ def draw_curr_board():
     
     except Exception as e:
         print(f"Error in draw_curr_board: {e}")
+
+
 
 drawing_in_progress = False
 drawing_surface = None
