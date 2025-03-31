@@ -50,7 +50,8 @@ def server_program():
                 players[client_id] = {
                     "player_number": player_count - 1,
                     "client_address": client_address,
-                    "color_idx": (player_count - 1) % 4  # cycle through 4 colors
+                    "color_idx": (player_count - 1) % 4,  # cycle through 4 colors
+                    "score": 0,
                 }
                 print(f"Player {client_id} joined the game with color index {players[client_id]['color_idx']}.")
 
@@ -139,6 +140,7 @@ def server_program():
                     "owner": client_id,
                     "color_idx": color_idx
                 }
+                players[client_id]["score"] += 1
                 
                 # broadcast to all players about the ownership of square
                 for player_id, player_info in players.items():
@@ -148,7 +150,8 @@ def server_program():
                             "row": row,
                             "col": col,
                             "owner_id": client_id,
-                            "color_idx": color_idx
+                            "color_idx": color_idx,
+                            "score": players[client_id]["score"]
                         }
                     }
                     server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
