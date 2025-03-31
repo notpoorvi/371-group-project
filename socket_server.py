@@ -25,6 +25,12 @@ def server_program():
     drawing_state = {}  # track which squares are being drawn
     player_count = 0
     players = {}
+    player_scores = {
+        "Red": 0,
+        "Cyan": 0,
+        "Green": 0,
+        "Pink": 0
+    }
 
     while True:
         data, client_address = server_socket.recvfrom(1024)
@@ -34,18 +40,18 @@ def server_program():
         data = message["data"]
 
         if message_type == "join":
-            curr_players += 1
-            if curr_players >= MAX_PLAYERS:
-                print("Player count (4) exceeded!")
-                response = {
-                    "type": "max_player_count_reached",
-                    "data": None
-                }
-                server_socket.sendto(json.dumps(response).encode(), client_address)
-                continue
-                            
             # assign a player ID and color
             if client_id not in players:
+                curr_players += 1
+                if curr_players > MAX_PLAYERS:
+                    print("Player count exceeded!")
+                    response = {
+                        "type": "max_player_count_reached",
+                        "data": None
+                    }
+                    server_socket.sendto(json.dumps(response).encode(), client_address)
+                    continue
+                
                 player_count += 1
                 players[client_id] = {
                     "player_number": player_count - 1,
@@ -70,7 +76,8 @@ def server_program():
                     "data": {
                         "game_board": game_state,
                         "player_count": player_count,
-                        "drawing": drawing_state
+                        "drawing": drawing_state,
+                        "color_scores": player_scores
                     }
                 }
                 server_socket.sendto(json.dumps(game_state_response).encode(), client_address)
@@ -141,6 +148,7 @@ def server_program():
                     "color_idx": color_idx
                 }
                 players[client_id]["score"] += 1
+                player_scores[list(player_scores.keys())[color_idx]] += 1
                 
                 # broadcast to all players about the ownership of square
                 for player_id, player_info in players.items():
@@ -151,7 +159,8 @@ def server_program():
                             "col": col,
                             "owner_id": client_id,
                             "color_idx": color_idx,
-                            "score": players[client_id]["score"]
+                            "score": players[client_id]["score"],
+                            "color_scores": player_scores
                         }
                     }
                     server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
@@ -163,7 +172,8 @@ def server_program():
                     "data": {
                         "game_board": game_state,
                         "player_count": player_count,
-                        "drawing": drawing_state
+                        "drawing": drawing_state,
+                        "color_scores": player_scores
                     }
                 }
                 server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
@@ -182,7 +192,8 @@ def server_program():
                         "data": {
                             "game_board": game_state,
                             "player_count": player_count,
-                            "drawing": drawing_state
+                            "drawing": drawing_state,
+                            "color_scores": player_scores
                         }
                     }
                     server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])

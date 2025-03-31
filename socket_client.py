@@ -90,6 +90,7 @@ def receive_message():
             elif message["type"] == "game_state":
                 game_state = message["data"]["game_board"]
                 player_count = message["data"]["player_count"]
+                player_scores = message["data"]["color_scores"]
                 if "drawing" in message["data"]:
                     drawing_state = message["data"]["drawing"]
             
