@@ -177,6 +177,56 @@ def server_program():
                     }
                 }
                 server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
+                
+            free_squares = 64 - player_scores["Red"] - player_scores["Cyan"] - player_scores["Green"] - player_scores["Pink"]
+            temp_player_scores = player_scores.copy()
+            first_place = max(temp_player_scores, key=temp_player_scores.get)
+            temp_player_scores[first_place] = -99999
+            second_place = max(temp_player_scores, key=temp_player_scores.get)
+            temp_player_scores[second_place] = -99999
+            third_place = max(temp_player_scores, key=temp_player_scores.get)
+            temp_player_scores[third_place] = -99999
+            fourth_place = max(temp_player_scores, key=temp_player_scores.get)
+    
+            if player_scores[second_place] + free_squares < player_scores[first_place]:
+                for player_id, player_info in players.items():
+                    response = {
+                        "type": "end_game",
+                        "data": {
+                            "winner": first_place+" Wins!"
+                        }
+                    }
+                    server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
+            elif player_scores[second_place] == player_scores[first_place] and \
+            player_scores[second_place] == player_scores[third_place] and \
+            player_scores[second_place] == player_scores[fourth_place] and free_squares == 0:
+                for player_id, player_info in players.items():
+                    response = {
+                        "type": "end_game",
+                        "data": {
+                            "winner": "Tie between Red, Cyan, Green, and Pink"
+                        }
+                    }
+                    server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
+            elif player_scores[second_place] == player_scores[first_place] and \
+            player_scores[second_place] == player_scores[third_place] and free_squares == 0:
+                for player_id, player_info in players.items():
+                    response = {
+                        "type": "end_game",
+                        "data": {
+                            "winner": "Tie between "+first_place+", "+second_place+", and "+third_place
+                        }
+                    }
+                    server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
+            elif player_scores[second_place] == player_scores[first_place] and free_squares == 0:
+                for player_id, player_info in players.items():
+                    response = {
+                        "type": "end_game",
+                        "data": {
+                            "winner": "Tie between "+first_place+" and "+second_place
+                        }
+                    }
+                    server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
             
         elif message_type == "leave":
             # handle player leaving
