@@ -3,7 +3,18 @@ import pygame
 from threading import Thread, Lock, main_thread, current_thread
 import random
 import json
+import sys
 import numpy as np
+
+
+# Initialize global variables
+drawing_in_progress = False
+drawing_surface = None
+drawing_pixels = None
+current_square = None
+last_Pos = None
+total_pixels = 0
+pixel_count = 0
 
 # send message to the server
 def send_message(message_type, data=None):
@@ -18,19 +29,20 @@ def send_message(message_type, data=None):
 
 pygame.init()
 
-HOST = socket.gethostbyname(socket.gethostname())
+# TODO: replace 'localhost' with the actual ip of the server'
+HOST = '192.168.1.85'
 PORT = 53444
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_address = (HOST, PORT)  # server IP and port
 client_id = random.randint(1000, 9999)  # unique client ID
 
-# Setting up display
+# setting up display
 SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 BOARD_SIZE = min(SCREEN_WIDTH, SCREEN_HEIGHT) - 100
 pygame.display.set_caption(f"Deny and Conquer: Player {client_id}")
     
-# Color definitions 
+# color definitions 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 
@@ -41,7 +53,7 @@ PLAYER_COLORS = [
     (255, 0, 255),  # Pink
 ]
 
-# Setting up the grid size
+# setting up the grid size
 GRID_SIZE = 8
 SQUARE_SIZE = BOARD_SIZE // GRID_SIZE
 GRID_TOP_LEFT_X = (SCREEN_WIDTH - BOARD_SIZE) // 2
@@ -53,8 +65,8 @@ game_state = {} # which player owns which square
 drawing_state = {} # which squares are being drawn on
 player_count = 0 # no. of players playing
 pixel_count = 0 # no. of pixels colored
-my_color_idx = 0  # Will be set from server message
-my_color = PLAYER_COLORS[0]  # Default, will be updated
+my_color_idx = 0  # will be set from server message
+my_color = PLAYER_COLORS[0]  # default, will be updated
 font = pygame.font.SysFont(None, 26)
 running = True # flag to control the receiver thread
 
@@ -62,6 +74,7 @@ running = True # flag to control the receiver thread
 # receive messages from the server
 def receive_message():
     global game_state, drawing_state, player_count, my_color_idx, my_color
+    global drawing_in_progress, current_square, drawing_surface, drawing_pixels, pixel_count, total_pixels, last_Pos
     
     while running:
         try:
@@ -75,6 +88,30 @@ def receive_message():
                 player_count = message["data"]["player_count"]
                 print(f"Connected as player {client_id} with color {my_color} (index {my_color_idx})")
                 print(f"Number of players playing the game: {player_count}")
+            
+            elif message["type"] == "max_player_count_reached":
+                sys.exit("Failed to join the game, server reached max player count")
+
+            elif message["type"] == "lock_granted":
+                row = message["data"]["row"]
+                col = message["data"]["col"]
+                
+                # Start drawing
+                drawing_in_progress = True
+                current_square = (row, col)
+                drawing_surface = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
+                drawing_surface.fill((255, 255, 255, 0))  # transparent
+                
+                drawing_pixels = np.zeros((SQUARE_SIZE, SQUARE_SIZE), dtype=bool)
+                pixel_count = 0
+                total_pixels = SQUARE_SIZE * SQUARE_SIZE
+                last_Pos = None
+            
+            elif message["type"] == "lock_denied":
+                # Visual feedback that the square is locked
+                row = message["data"]["row"]
+                col = message["data"]["col"]
+                print(f"Lock denied for square ({row}, {col}) - another player is already drawing there")
             
             # current game state, which player owns which square ...
             elif message["type"] == "game_state":
@@ -135,10 +172,10 @@ def receive_message():
 
 def draw_curr_board():
     try:
-        # Background
+        # background
         screen.fill(WHITE)
 
-        # Drawing 8 by 8 Grid
+        # drawing 8 by 8 Grid
         for row in range(GRID_SIZE):
             for col in range(GRID_SIZE):
                 x = GRID_TOP_LEFT_X + col * SQUARE_SIZE
@@ -180,12 +217,11 @@ def draw_curr_board():
             screen.blit(drawing_surface, (x, y))
 
         if current_thread() is main_thread():
-            # Update the display
+            # update the display
             pygame.display.flip()
     
     except Exception as e:
         print(f"Error in draw_curr_board: {e}")
-        
 
 drawing_in_progress = False
 drawing_surface = None
@@ -207,31 +243,21 @@ def get_grid_position(mouse_pos):
     return None, None
 
 def start_drawing(square):
-    global drawing_in_progress, current_square, drawing_surface, drawing_pixels, pixel_count, total_pixels, last_Pos
     row, col = square
     
-    if (str(row) in game_state and str(col) in game_state[str(row)] and game_state[str(row)][str(col)]["owner"] is not None) or \
-    (str(row) in drawing_state and str(col) in drawing_state[str(row)]):
-        return False
-    
-    # set up drawing
-    drawing_in_progress = True
-    current_square = (row, col)
-    drawing_surface = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
-    drawing_surface.fill((255, 255, 255, 0))  # transparent
-    
-    drawing_pixels = np.zeros((SQUARE_SIZE, SQUARE_SIZE), dtype=bool)
-    pixel_count = 0
-    total_pixels = SQUARE_SIZE * SQUARE_SIZE
-    last_Pos = None
-    
-    # notify server the player is starting to draw
-    send_message("start_drawing", {
+    # Instead of checking locally, send a lock request to the server
+    send_message("request_lock", {
         "row": row,
         "col": col
     })
     
-    return True
+    # Start drawing only when "lock_granted" message received
+    # Drawing will be started in the message handler
+    # Return True request for lock sent
+
+    return True  
+
+
 
 def continue_drawing(pos):
     global pixel_count, drawing_pixels, last_Pos
@@ -347,6 +373,7 @@ while game_running:
         # if mouse is up, end drawing
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1 and drawing_in_progress:
             end_drawing()
+            
     
     # draw the board every frame
     draw_curr_board()
