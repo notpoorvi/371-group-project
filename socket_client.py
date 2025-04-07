@@ -6,6 +6,16 @@ import json
 import sys
 import numpy as np
 
+
+# Initialize global variables
+drawing_in_progress = False
+drawing_surface = None
+drawing_pixels = None
+current_square = None
+last_Pos = None
+total_pixels = 0
+pixel_count = 0
+
 # send message to the server
 def send_message(message_type, data=None):
     # format and send message to server
@@ -21,7 +31,7 @@ def send_message(message_type, data=None):
 pygame.init()
 
 # TODO: replace 'localhost' with the actual ip of the server'
-HOST = 'localhost'
+HOST = 'localhost'  
 PORT = 53444
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_address = (HOST, PORT)  # server IP and port
@@ -84,10 +94,11 @@ def draw_cursor():
             pygame.draw.circle(screen, my_color, mouse_pos, cursor_radius)
             # draw a black border
             pygame.draw.circle(screen, BLACK, mouse_pos, cursor_radius, 1)
-
+            
 # receive messages from the server
 def receive_message():
     global game_state, drawing_state, player_count, my_color_idx, my_color, player_scores, game_running, winning_text
+    global drawing_in_progress, current_square, drawing_surface, drawing_pixels, pixel_count, total_pixels, last_Pos
     
     while running:
         try:
@@ -103,27 +114,47 @@ def receive_message():
                 print(f"Connected as player {client_id} with color {my_color} (index {my_color_idx})")
                 print(f"Number of players playing the game: {player_count}")
             
-            # if the server is full, exit
             elif message["type"] == "max_player_count_reached":
                 sys.exit("Failed to join the game, server reached max player count")
+
+            elif message["type"] == "lock_granted":
+                row = message["data"]["row"]
+                col = message["data"]["col"]
+                
+                # start drawing
+                drawing_in_progress = True
+                current_square = (row, col)
+                drawing_surface = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
+                drawing_surface.fill((255, 255, 255, 0))  # transparent
+                
+                drawing_pixels = np.zeros((SQUARE_SIZE, SQUARE_SIZE), dtype=bool)
+                pixel_count = 0
+                total_pixels = SQUARE_SIZE * SQUARE_SIZE
+                last_Pos = None
+            
+            elif message["type"] == "lock_denied":
+                # visual feedback that the square is locked
+                row = message["data"]["row"]
+                col = message["data"]["col"]
+                print(f"Lock denied for square ({row}, {col}) - another player is already drawing there")
             
             # current game state, which player owns which square ...
             elif message["type"] == "game_state":
-                game_state = message["data"]["game_board"] # current game state
-                player_count = message["data"]["player_count"] # number of players playing
-                player_scores = message["data"]["color_scores"] # current scores of each player
-                if "drawing" in message["data"]: # drawing state
+                game_state = message["data"]["game_board"]
+                player_count = message["data"]["player_count"]
+                player_scores = message["data"]["color_scores"]
+                if "drawing" in message["data"]:
                     drawing_state = message["data"]["drawing"]
             
             # updated when a player owns a square by coloring it more than 50%
             elif message["type"] == "square_owned":
-                row = message["data"]["row"] # row of the square
-                col = message["data"]["col"] # column of the square
-                owner_id = message["data"]["owner_id"] # id of the player who owns the square
-                color_idx = message["data"]["color_idx"] # index of the color assigned to the player
-                score = message["data"]["score"] # score of the player who owns the square
+                row = message["data"]["row"]
+                col = message["data"]["col"]
+                owner_id = message["data"]["owner_id"]
+                color_idx = message["data"]["color_idx"]
+                score = message["data"]["score"]
 
-                # map color index to color
+                # Map color index to color
                 color_map = {
                     0: "Red",
                     1: "Cyan",
@@ -131,8 +162,10 @@ def receive_message():
                     3: "Pink"
                 }
 
-                player_color = color_map[color_idx]  # get the player name
-                player_scores[player_color] = score # update the player's score
+                player_color = color_map[color_idx]  # Get the player name
+
+                # Update the player's score
+                player_scores[player_color] = score
                 
                 # update the game state
                 if str(row) not in game_state:
@@ -174,7 +207,6 @@ def receive_message():
                     surface = drawing_state[str(row)][str(col)]["surface"]
                     pygame.draw.line(surface, PLAYER_COLORS[color_idx], start, end, thickness)
                     
-            # updated when a player ends drawing on a square
             elif message["type"] == "end_game":
                 game_running = False
                 winning_text = message["data"]["winner"]
@@ -280,31 +312,19 @@ def get_grid_position(mouse_pos):
     return None, None
 
 def start_drawing(square):
-    global drawing_in_progress, current_square, drawing_surface, drawing_pixels, pixel_count, total_pixels, last_Pos
     row, col = square
     
-    # check if the square is already owned or being drawn on
-    if (str(row) in game_state and str(col) in game_state[str(row)] and game_state[str(row)][str(col)]["owner"] is not None) or \
-    (str(row) in drawing_state and str(col) in drawing_state[str(row)]):
-        return False
-    
-    # set up drawing
-    drawing_in_progress = True
-    current_square = (row, col)
-    drawing_surface = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
-    drawing_surface.fill((255, 255, 255, 0))  # transparent
-    
-    drawing_pixels = np.zeros((SQUARE_SIZE, SQUARE_SIZE), dtype=bool)
-    pixel_count = 0
-    total_pixels = SQUARE_SIZE * SQUARE_SIZE
-    last_Pos = None
-    
-    # notify server the player is starting to draw
-    send_message("start_drawing", {
+    # instead of checking locally, send a lock request to the server
+    send_message("request_lock", {
         "row": row,
         "col": col
     })
-    return True
+    
+    # start drawing only when "lock_granted" message received
+    # drawing will be started in the message handler
+    # return True request for lock sent
+
+    return True  
 
 def continue_drawing(pos):
     global pixel_count, drawing_pixels, last_Pos

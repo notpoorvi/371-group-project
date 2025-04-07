@@ -81,6 +81,63 @@ def server_program():
                     }
                 }
                 server_socket.sendto(json.dumps(game_state_response).encode(), client_address)
+                
+        elif message_type == "request_lock":
+            row = data.get("row")
+            col = data.get("col")
+
+            # check square is being drawn on
+            square_is_being_drawn = (str(row) in drawing_state and str(col) in drawing_state[str(row)])
+
+            # check square already colored
+            square_is_owned = (game_state[str(row)][str(col)]["owner"] is not None)
+
+            # lock the square if either is true
+            is_locked = square_is_being_drawn or square_is_owned
+            
+            if not is_locked:
+                # grant lock to this player
+                if str(row) not in drawing_state:
+                    drawing_state[str(row)] = {}
+
+                drawing_state[str(row)][str(col)] = {
+                    "drawer_id": client_id,
+                    "color_idx": players[client_id]["color_idx"]
+                }
+
+                # notify requesting player that they got the lock
+                response = {
+                    "type": "lock_granted",
+                    "data": {
+                        "row": row,
+                        "col": col
+                    }
+                }
+                server_socket.sendto(json.dumps(response).encode(), client_address)
+                
+                # notify all other players about the lock
+                for player_id, player_info in players.items():
+                    if player_id != client_id:
+                        response = {
+                            "type": "start_drawing",
+                            "data": {
+                                "row": row,
+                                "col": col,
+                                "drawer_id": client_id,
+                                "color_idx": players[client_id]["color_idx"]
+                            }
+                        }
+                        server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
+            else:
+                # notify player that lock request was denied
+                response = {
+                    "type": "lock_denied",
+                    "data": {
+                        "row": row,
+                        "col": col
+                    }
+                }
+                server_socket.sendto(json.dumps(response).encode(), client_address)
 
         elif message_type == "start_drawing":
             row = data.get("row")
@@ -107,7 +164,7 @@ def server_program():
                     }
                 }
                 server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
-
+                
         elif message_type == "drawing":
             # forward drawing data with pen thickness
             start = data.get("start")
