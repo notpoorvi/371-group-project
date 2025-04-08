@@ -32,6 +32,7 @@ pygame.init()
 
 # TODO: replace 'localhost' with the actual ip of the server'
 HOST = 'localhost'  
+# HOST = '192.168.1.167'  
 PORT = 53444
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_address = (HOST, PORT)  # server IP and port
@@ -144,7 +145,18 @@ def receive_message():
                 player_count = message["data"]["player_count"]
                 player_scores = message["data"]["color_scores"]
                 if "drawing" in message["data"]:
-                    drawing_state = message["data"]["drawing"]
+                    # clear previous drawing state
+                    drawing_state = {}
+                    # recreate drawing state with proper surfaces
+                    for row_key, row_data in message["data"]["drawing"].items():
+                        drawing_state[row_key] = {}
+                        for col_key, square_data in row_data.items():
+                            drawing_state[row_key][col_key] = {
+                                "drawer_id": square_data["drawer_id"],
+                                "color_idx": square_data["color_idx"],
+                                "surface": pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
+                            }
+                            drawing_state[row_key][col_key]["surface"].fill((255, 255, 255, 0))
             
             # updated when a player owns a square by coloring it more than 50%
             elif message["type"] == "square_owned":
@@ -202,10 +214,31 @@ def receive_message():
                 color_idx = message["data"]["color_idx"] # index of the color assigned to the player
                 thickness = message["data"].get("thickness", PEN_THICKNESS) # thickness of the line
                 
-                # draw the line on the surface of the square
-                if str(row) in drawing_state and str(col) in drawing_state[str(row)]:
-                    surface = drawing_state[str(row)][str(col)]["surface"]
-                    pygame.draw.line(surface, PLAYER_COLORS[color_idx], start, end, thickness)
+                # create drawing state entry if it doesn't exist
+                if str(row) not in drawing_state:
+                    drawing_state[str(row)] = {}
+                
+                # # draw the line on the surface of the square
+                # if str(row) in drawing_state and str(col) in drawing_state[str(row)]:
+                #     surface = drawing_state[str(row)][str(col)]["surface"]
+                #     pygame.draw.line(surface, PLAYER_COLORS[color_idx], start, end, thickness)
+                
+                if str(col) not in drawing_state[str(row)]:
+                    drawing_state[str(row)][str(col)] = {
+                        "drawer_id": -1,  # unknown drawer
+                        "color_idx": color_idx,
+                        "surface": pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
+                    }
+                    drawing_state[str(row)][str(col)]["surface"].fill((255, 255, 255, 0))
+                
+                # make sure surface exists
+                if "surface" not in drawing_state[str(row)][str(col)]:
+                    drawing_state[str(row)][str(col)]["surface"] = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
+                    drawing_state[str(row)][str(col)]["surface"].fill((255, 255, 255, 0))
+                
+                # draw the line
+                surface = drawing_state[str(row)][str(col)]["surface"]
+                pygame.draw.line(surface, PLAYER_COLORS[color_idx], start, end, thickness)
                     
             elif message["type"] == "end_game":
                 game_running = False
@@ -270,9 +303,18 @@ def draw_curr_board():
                 if str(row) in drawing_state and str(col) in drawing_state[str(row)]:
                     drawer_id = drawing_state[str(row)][str(col)]["drawer_id"]
                     if drawer_id != client_id:  # only draw others drawings
-                        drawer_surface = drawing_state[str(row)][str(col)].get("surface")
-                        if drawer_surface:
-                            screen.blit(drawer_surface, (x, y))
+                        # drawer_surface = drawing_state[str(row)][str(col)].get("surface")
+                        # if drawer_surface:
+                        #     screen.blit(drawer_surface, (x, y))
+                        try:
+                            drawer_surface = drawing_state[str(row)][str(col)].get("surface")
+                            if drawer_surface:
+                                screen.blit(drawer_surface, (x, y))
+                        except Exception as e:
+                            print(f"Error drawing surface: {e}")
+                            # create a new surface if there was an error
+                            drawing_state[str(row)][str(col)]["surface"] = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
+                            drawing_state[str(row)][str(col)]["surface"].fill((255, 255, 255, 0))
 
         # if we're currently drawing, show our drawing
         if drawing_in_progress and drawing_surface and current_square:
@@ -403,6 +445,11 @@ def end_drawing():
         "col": col,
         "fill_percentage": fill_percentage
     })
+    
+    # debug statements
+    print(f"Ending drawing at square ({row}, {col})")
+    print(f"Fill percentage: {fill_percentage:.2f}%")
+    print(f"Pixels filled: {pixel_count}/{total_pixels}")
     
     # reset drawing state
     drawing_in_progress = False
