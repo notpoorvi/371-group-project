@@ -77,7 +77,7 @@ player_scores = {
     "Cyan": 0,
     "Green": 0,
     "Pink": 0
-}
+} #Dictionary for clients to store player scores
 
 # cursor settings (draw a circle at the mouse position with radius 6)
 show_cursor = True
@@ -108,16 +108,19 @@ def receive_message():
             message = json.loads(data.decode())
             
             # check the message type of each message from the server
-            if message["type"] == "start": # new player joined
+            # Player joins the game
+            if message["type"] == "start":
                 my_color_idx = message["data"]["color_idx"] # index of the color assigned to the player
                 my_color = PLAYER_COLORS[my_color_idx] # get the color
                 player_count = message["data"]["player_count"] # number of players playing
                 print(f"Connected as player {client_id} with color {my_color} (index {my_color_idx})")
                 print(f"Number of players playing the game: {player_count}")
-            
-            elif message["type"] == "max_player_count_reached":
+
+            # Player cannot join game due 4 player limit
+            elif message["type"] == "max_player_count_reached":  #
                 sys.exit("Failed to join the game, server reached max player count")
 
+            # Get access to white square
             elif message["type"] == "lock_granted":
                 row = message["data"]["row"]
                 col = message["data"]["col"]
@@ -132,7 +135,8 @@ def receive_message():
                 pixel_count = 0
                 total_pixels = SQUARE_SIZE * SQUARE_SIZE
                 last_Pos = None
-            
+
+            # Get denied access to square to white square because other player is drawing in it already
             elif message["type"] == "lock_denied":
                 # visual feedback that the square is locked
                 row = message["data"]["row"]
@@ -252,6 +256,7 @@ def receive_message():
             if running:
                 print(f"Error receiving message: {e}")
 
+# Draw the player score into the board
 def draw_scores():
     score_x = 20  # X position for the scores
     score_y = 20  # Starting Y position
@@ -261,6 +266,7 @@ def draw_scores():
         score_text = font.render(f"{player}: {score}", True, "black")
         screen.blit(score_text, (score_x, score_y + i * spacing))  # Display score
 
+# Draw player's board
 def draw_curr_board():
     try:
         # background
