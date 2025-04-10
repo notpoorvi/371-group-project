@@ -9,14 +9,15 @@ def server_program():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_socket.bind((host, port))
 
-    MAX_PLAYERS = 4
+    MAX_PLAYERS = 4 # Set maximum player
     curr_players = 0
 
     print(f"UDP Server is listening on {host}:{port}")
 
     # Game state initialization
     GRID_SIZE = 8
-    game_state = {}  # initialize as dict of dicts
+    game_state = {}
+    # initialize as dict of dicts
     for row in range(GRID_SIZE):
         game_state[str(row)] = {}
         for col in range(GRID_SIZE):
@@ -24,21 +25,23 @@ def server_program():
             
     drawing_state = {}  # track which squares are being drawn
     player_count = 0
-    players = {}
+    players = {} # Player Details
     player_scores = {
         "Red": 0,
         "Cyan": 0,
         "Green": 0,
         "Pink": 0
-    }
+    } # Player Scores
 
     while True:
+        # Receive data from client
         data, client_address = server_socket.recvfrom(1024)
         message = json.loads(data.decode())
         message_type = message["type"]
         client_id = message["client_id"]
         data = message["data"]
 
+        # Player tries to join the game
         if message_type == "join":
             # assign a player ID and color
             if client_id not in players:
@@ -81,7 +84,8 @@ def server_program():
                     }
                 }
                 server_socket.sendto(json.dumps(game_state_response).encode(), client_address)
-                
+
+        # Player tries to draw in a non-conquered square
         elif message_type == "request_lock":
             row = data.get("row")
             col = data.get("col")
@@ -284,7 +288,7 @@ def server_program():
                         }
                     }
                     server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
-            
+        # Player leaves the game
         elif message_type == "leave":
             # handle player leaving
             if client_id in players:
