@@ -142,32 +142,6 @@ def server_program():
                     }
                 }
                 server_socket.sendto(json.dumps(response).encode(), client_address)
-
-        elif message_type == "start_drawing":
-            row = data.get("row")
-            col = data.get("col")
-            
-            # mark square as being drawn
-            if str(row) not in drawing_state:
-                drawing_state[str(row)] = {}
-            
-            drawing_state[str(row)][str(col)] = {
-                "drawer_id": client_id,
-                "color_idx": players[client_id]["color_idx"]
-            }
-            
-            # broadcast to all players about the drawing
-            for player_id, player_info in players.items():
-                response = {
-                    "type": "start_drawing",
-                    "data": {
-                        "row": row,
-                        "col": col,
-                        "drawer_id": client_id,
-                        "color_idx": players[client_id]["color_idx"]
-                    }
-                }
-                server_socket.sendto(json.dumps(response).encode(), player_info["client_address"])
                 
         elif message_type == "drawing":
             # forward drawing data with pen thickness
